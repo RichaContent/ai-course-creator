@@ -1,5 +1,5 @@
 import streamlit as st
-import openai
+from openai import OpenAI              # new style client
 from docx import Document
 from pptx import Presentation
 from pptx.util import Pt
@@ -7,129 +7,121 @@ from io import BytesIO
 from zipfile import ZipFile, ZIP_DEFLATED
 import os
 
-# ── App & key setup ────────────────────────────────────────────────
+# ───────────────────────── App / Key ─────────────────────────
 st.set_page_config(page_title="AI Course Creator", layout="centered")
 st.title("🧠 AI Training Course Creator")
 
-# Load key from Streamlit Cloud secrets
 if "OPENAI_API_KEY" not in st.secrets:
-    st.error("❌ OPENAI_API_KEY not found in Streamlit Secrets. "
-             "Add it in Manage App → Settings → Secrets.")
+    st.error("Add OPENAI_API_KEY in Secrets before running.")
     st.stop()
 
-openai.api_key = st.secrets["OPENAI_API_KEY"]
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ── Input form (all blank by default) ───────────────────────────────
+# ───────────────────────── Form ──────────────────────────────
 with st.form("course_form"):
-    topic    = st.text_input("📖 Course Topic")
+    topic    = st.text_input("📚 Course Topic")
     audience = st.text_input("👥 Target Audience")
-    duration = st.number_input("⏱ Duration (minutes)", 30, 480, step=15)
+    duration = st.number_input("⏳ Duration (minutes)", 30, 480, step=15)
     tone     = st.selectbox("🎤 Tone", ["Formal", "Conversational", "Inspiring"])
     level    = st.selectbox("🎚 Complexity", ["Beginner", "Intermediate", "Advanced"])
     submitted = st.form_submit_button("🚀 Generate Course")
 
-# ── Utilities ──────────────────────────────────────────────────────
+# ───────────────────────── Helpers ───────────────────────────
 def save_doc(text, fname):
     doc = Document()
-    for para in text.split("\n\n"):
-        doc.add_paragraph(para)
+    for block in text.split("\n\n"):
+        doc.add_paragraph(block)
     doc.save(fname); return fname
 
-def save_ppt(slides_txt, fname):
-    prs = Presentation(); layout = prs.slide_layouts[1]
-    for slide in slides_txt.split("\n\n"):
-        lines = [l.strip("• ").strip() for l in slide.split("\n") if l.strip()]
+def save_ppt(text, fname):
+    prs = Presentation()
+    for chunk in text.split("\n\n"):
+        lines = [l.strip("• ").strip() for l in chunk.split("\n") if l.strip()]
         if not lines: continue
-        s = prs.slides.add_slide(layout)
+        s = prs.slides.add_slide(prs.slide_layouts[1])
         s.shapes.title.text = lines[0]
         s.placeholders[1].text = "\n".join(lines[1:])
     prs.save(fname); return fname
 
-def zip_files(d):
+def zip_bytes(files: dict):
     buf = BytesIO()
     with ZipFile(buf, "w", ZIP_DEFLATED) as z:
-        for arc, path in d.items(): z.write(path, arcname=arc)
+        for arc, p in files.items(): z.write(p, arcname=arc)
     buf.seek(0); return buf
 
-# ── Main generation block ──────────────────────────────────────────
+# ───────────────────────── Generate ──────────────────────────
 if submitted:
-    if not all([topic, audience]):
-        st.error("Please fill in every field."); st.stop()
+    if not (topic and audience):
+        st.error("Please fill every field."); st.stop()
 
     prompt = f"""
-Design a {duration}-minute training course on “{topic}” for {audience}.
+Design a {duration}-minute course on "{topic}" for {audience}.
 Tone: {tone.lower()}, Level: {level.lower()}.
 
-Return exactly five sections with these H3 markers:
+Return **exactly** these 5 sections each under an H3 header:
 
 ### Course_Outline
-- Module title | hh:mm | objectives | delivery method | brief content
+Module title | hh:mm | objective(s) | delivery method | brief description
 
 ### Slides
 Slide 1 Title
-• Bullet
-• Bullet
+• bullet
+• bullet
 
 ### Quiz
-Q1 …  
-A. …  
-B. …  
-C. … (Correct)  
-D. …
+5 MCQs, 4 options, mark correct.
 
 ### Workbook
-Second-person activities, blanks, 1 role-play scenario.
+Second-person exercises, blanks, 1 role-play scenario.
 
 ### Facilitator_Guide
-Step-by-step instructions, timings, tips.
+Step-by-step timings, questions, tips.
 """
 
-    with st.spinner("Generating course…"):
-        rsp = openai.ChatCompletion.create(
+    with st.spinner("Generating…"):
+        rsp = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}]
+            messages=[{"role": "user", "content": prompt}],
         )
-    txt   = rsp.choices[0].message.content
-    toks  = rsp.usage.total_tokens
-    cost  = round(toks / 1000 * 0.01, 4)
-    st.success(f"✅ Done – {toks} tokens (~${cost})")
 
-    # split output
-    def grab(tag):
-        marker = f"### {tag}"
-        return txt.split(marker)[1].split("###")[0].strip() if marker in txt else ""
-    outline = grab("Course_Outline")
-    slides  = grab("Slides")
-    quiz    = grab("Quiz")
-    wb      = grab("Workbook")
-    guide   = grab("Facilitator_Guide")
+    text   = rsp.choices[0].message.content
+    tokens = rsp.usage.total_tokens
+    cost   = round(tokens / 1000 * 0.01, 4)
+    st.success(f"✅ Done – {tokens} tokens (~${cost})")
 
-    # save files
-    out_path   = save_doc(outline, "Course_Outline.docx")
-    ppt_path   = save_ppt(slides,  "Slides.pptx")
-    quiz_path  = save_doc(quiz,    "Quiz.docx")
-    wb_path    = save_doc(wb,      "Workbook.docx")
-    guide_path = save_doc(guide,   "Facilitator_Guide.docx")
+    def section(name):
+        tag = f"### {name}"
+        return text.split(tag)[1].split("###")[0].strip() if tag in text else ""
 
-    # download buttons (force File Save dialog)
-    def dl(label, path):
-        st.download_button(label, open(path, "rb"), file_name=os.path.basename(path),
+    outline = section("Course_Outline")
+    slides  = section("Slides")
+    quiz    = section("Quiz")
+    workbk  = section("Workbook")
+    guide   = section("Facilitator_Guide")
+
+    outline_p = save_doc(outline, "Course_Outline.docx")
+    slides_p  = save_ppt(slides,  "Slides.pptx")
+    quiz_p    = save_doc(quiz,    "Quiz.docx")
+    work_p    = save_doc(workbk,  "Workbook.docx")
+    guide_p   = save_doc(guide,   "Facilitator_Guide.docx")
+
+    # download buttons
+    for label, path in [
+        ("Outline", outline_p), ("Slides", slides_p),
+        ("Quiz", quiz_p), ("Workbook", work_p),
+        ("Facilitator Guide", guide_p)
+    ]:
+        st.download_button(f"📥 {label}", open(path, "rb"),
+                           file_name=os.path.basename(path),
                            mime="application/octet-stream")
-    col1, col2 = st.columns(2)
-    with col1:
-        dl("📥 Outline", out_path)
-        dl("📥 Slides",  ppt_path)
-        dl("📥 Quiz",    quiz_path)
-    with col2:
-        dl("📥 Workbook", wb_path)
-        dl("📥 Facilitator Guide", guide_path)
 
-    # zip all
-    all_zip = zip_files({
-        "Course_Outline.docx": out_path,
-        "Slides.pptx": ppt_path,
-        "Quiz.docx": quiz_path,
-        "Workbook.docx": wb_path,
-        "Facilitator_Guide.docx": guide_path
+    # zip
+    zip_buf = zip_bytes({
+        "Course_Outline.docx": outline_p,
+        "Slides.pptx": slides_p,
+        "Quiz.docx": quiz_p,
+        "Workbook.docx": work_p,
+        "Facilitator_Guide.docx": guide_p,
     })
-    st.download_button("📦 Download ALL (.zip)", data=all_zip, file_name="AI_Course.zip", mime="application/zip")
+    st.download_button("📦 ALL files (.zip)", zip_buf,
+                       file_name="AI_Course.zip", mime="application/zip")
