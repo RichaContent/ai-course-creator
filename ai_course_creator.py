@@ -5,31 +5,36 @@ from pptx import Presentation
 from pptx.util import Inches
 import os
 
-# UI Config
+# ------------------------------
+# App Config
+# ------------------------------
 st.set_page_config(page_title="AI Course Creator", layout="centered")
 st.title("🧠 AI Training Course Creator")
 st.markdown("Create a ready-to-use training course with AI.")
 
-# Step 1: Enter API Key
-api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
-if not api_key:
-    st.info("Please enter your OpenAI API key to proceed.")
-    st.stop()
+# ------------------------------
+# Set OpenAI Key from Secrets
+# ------------------------------
+api_key = st.secrets["OPENAI_API_KEY"]
 openai.api_key = api_key
 
-# Step 2: User Inputs (Empty Fields)
+# ------------------------------
+# Input Form
+# ------------------------------
 with st.form("course_form"):
-    topic = st.text_input("📖 Course Topic", value="")
-    audience = st.text_input("🎯 Target Audience", value="")
-    duration = st.number_input("⏳ Duration (minutes)", min_value=30, max_value=480, step=10)
-    tone = st.selectbox("🎤 Tone", ["Select", "Formal", "Conversational", "Inspiring"])
-    level = st.selectbox("📚 Difficulty Level", ["Select", "Beginner", "Intermediate", "Advanced"])
+    topic = st.text_input("📖 Course Topic")
+    audience = st.text_input("🎯 Target Audience")
+    duration = st.number_input("⏳ Duration (minutes)", min_value=30, max_value=480, step=10, value=60)
+    tone = st.selectbox("🎤 Tone", ["Formal", "Conversational", "Inspiring"])
+    level = st.selectbox("📚 Difficulty Level", ["Beginner", "Intermediate", "Advanced"])
     submitted = st.form_submit_button("🚀 Generate Course")
 
-# Step 3: Generate AI Output
+# ------------------------------
+# Generate Output
+# ------------------------------
 if submitted:
-    if not topic or not audience or tone == "Select" or level == "Select":
-        st.error("⚠️ Please fill in all fields.")
+    if not topic or not audience or not tone or not level:
+        st.error("⚠️ Please complete all fields.")
         st.stop()
 
     prompt = f"""
@@ -57,10 +62,12 @@ Structure the output in these 5 labeled sections:
             st.error(f"OpenAI Error: {str(e)}")
             st.stop()
 
-    st.success("✅ Course generated successfully!")
+    st.success("✅ Course generated!")
     st.caption(f"Used {tokens} tokens · Estimated cost: ${cost:.2f}")
 
-    # Step 4: Parse sections
+    # --------------------------
+    # Parse Sections
+    # --------------------------
     def extract_sections(text):
         sections = {}
         current = None
@@ -69,12 +76,15 @@ Structure the output in these 5 labeled sections:
             elif line.strip().startswith("2. "): current = "Slides"
             elif line.strip().startswith("3. "): current = "Quiz"
             elif line.strip().startswith("4. "): current = "Workbook"
-            elif line.strip().startswith("5. "): current = "Facilitator"
+            elif line.strip().startswith("5. "): current = "Facilitator_Guide"
             if current:
                 sections.setdefault(current, "")
                 sections[current] += line + "\n"
         return sections
 
+    # --------------------------
+    # Save Functions
+    # --------------------------
     def save_doc(content, filename):
         doc = Document()
         for line in content.split('\n'):
@@ -87,7 +97,9 @@ Structure the output in these 5 labeled sections:
 
     def save_ppt(content, filename):
         prs = Presentation()
-        for line in content.split("\n"):
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        content_lines = content.split("\n")
+        for i, line in enumerate(content_lines):
             if line.strip().lower().startswith("slide"):
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
                 slide.shapes.title.text = line.strip()
@@ -99,17 +111,22 @@ Structure the output in these 5 labeled sections:
         prs.save(filename)
         return filename
 
-    # Step 5: Save & Download files
+    # --------------------------
+    # Build Outputs
+    # --------------------------
     sections = extract_sections(result)
 
     outline_path = save_doc(sections.get("Outline", ""), "Course_Outline.docx")
     slides_path = save_ppt(sections.get("Slides", ""), "Slides.pptx")
     quiz_path = save_doc(sections.get("Quiz", ""), "Quiz.docx")
     workbook_path = save_doc(sections.get("Workbook", ""), "Workbook.docx")
-    facilitator_path = save_doc(sections.get("Facilitator", ""), "Facilitator_Guide.docx")
+    guide_path = save_doc(sections.get("Facilitator_Guide", ""), "Facilitator_Guide.docx")
 
+    # --------------------------
+    # Download Buttons
+    # --------------------------
     st.download_button("📥 Download Course Outline", open(outline_path, "rb"), file_name="Course_Outline.docx")
     st.download_button("📥 Download Slides", open(slides_path, "rb"), file_name="Slides.pptx")
     st.download_button("📥 Download Quiz", open(quiz_path, "rb"), file_name="Quiz.docx")
     st.download_button("📥 Download Workbook", open(workbook_path, "rb"), file_name="Workbook.docx")
-    st.download_button("📥 Download Facilitator Guide", open(facilitator_path, "rb"), file_name="Facilitator_Guide.docx")
+    st.download_button("📥 Download Facilitator Guide", open(guide_path, "rb"), file_name="Facilitator_Guide.docx")
