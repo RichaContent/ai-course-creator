@@ -5,10 +5,8 @@ from pptx import Presentation
 from pptx.util import Inches
 import os
 
-# Page config
+# Page settings
 st.set_page_config(page_title="AI Course Creator", layout="wide")
-
-# Secure API key from secrets
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Helpers
@@ -35,49 +33,48 @@ def save_ppt(slides, filename):
 
 # UI
 st.title("🧠 AI Training Course Creator")
-st.markdown("Generate a structured training course in minutes using GPT-4o.")
+st.markdown("Create a structured, ready-to-use training course with GPT-4o.")
 
 with st.form("course_form"):
-    topic = st.text_input("📝 Course Topic")
-    audience = st.text_input("🎯 Audience")
-    duration = st.number_input("⏳ Duration (minutes)", 30, 480)
-    tone = st.selectbox("🎤 Tone", ["Select", "Formal", "Conversational", "Inspiring"])
-    level = st.selectbox("📚 Difficulty Level", ["Select", "Beginner", "Intermediate", "Advanced"])
+    topic = st.text_input("📝 Course Topic", value=st.session_state.get("topic", ""))
+    audience = st.text_input("🎯 Audience", value=st.session_state.get("audience", ""))
+    duration = st.number_input("⏳ Duration (minutes)", 30, 480, value=st.session_state.get("duration", 60))
+    tone = st.selectbox("🎤 Tone", ["Select", "Formal", "Conversational", "Inspiring"], index=st.session_state.get("tone_index", 0))
+    level = st.selectbox("📚 Difficulty Level", ["Select", "Beginner", "Intermediate", "Advanced"], index=st.session_state.get("level_index", 0))
     submit = st.form_submit_button("🚀 Generate Course")
 
-# Validate inputs
+# Validate and process
 if submit:
     if not topic or not audience or tone == "Select" or level == "Select":
         st.error("⚠️ Please fill in all fields before generating the course.")
         st.stop()
 
-    with st.spinner("Creating your course..."):
+    with st.spinner("Generating course..."):
 
-        # Prompt to GPT
-        system_prompt = f"""
+        prompt = f"""
 You are a world-class instructional designer. Create a {duration}-minute training course on "{topic}" for "{audience}". The tone should be {tone.lower()} and the audience level is {level.lower()}.
 
-Generate the following:
-1. Course Outline with timings and method of delivery (e.g., activity, case study, discussion)
-2. PowerPoint slide content for each module (title + bullet points)
-3. A 6-question quiz in MCQ format, with correct answers
-4. Workbook activities written in second person with space to write, reflection questions, or role play prompts
-5. A detailed facilitator guide with instructions, timings, and facilitation tips
+Provide:
+1. Course Outline with timings and training method per section (e.g., discussion, case study)
+2. PowerPoint slide content (title + bullets)
+3. A 6-question MCQ quiz with correct answers
+4. Workbook activities (second-person voice, reflection, role-play prompts)
+5. Facilitator Guide with instructions and timings
 
 Clearly label each section.
         """
 
         response = openai.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": system_prompt}],
+            messages=[{"role": "system", "content": prompt}],
             temperature=0.7
         )
 
-        result = response.choices[0].message.content
+        output = response.choices[0].message.content
         tokens = response.usage.total_tokens
         cost = estimate_cost(tokens)
 
-    # Parse GPT response
+    # Split response
     sections = {
         "Course Outline": "",
         "Slides": [],
@@ -87,41 +84,35 @@ Clearly label each section.
     }
 
     current = None
-    for line in result.split("\n"):
+    for line in output.split("\n"):
         line = line.strip()
         if line.lower().startswith("1. course outline"):
             current = "Course Outline"
         elif line.lower().startswith("2. powerpoint"):
             current = "Slides"
-        elif line.lower().startswith("3. a 6-question") or line.lower().startswith("3. quiz"):
+        elif line.lower().startswith("3.") and "quiz" in line.lower():
             current = "Quiz"
         elif line.lower().startswith("4. workbook"):
             current = "Workbook"
         elif line.lower().startswith("5. facilitator"):
             current = "Facilitator Guide"
         elif current == "Slides" and line.lower().startswith("slide"):
-            if "–" in line:
-                parts = line.split("–")
-            elif "-" in line:
-                parts = line.split("-")
-            else:
-                parts = [line, ""]
-            sections["Slides"].append({
-                "title": parts[0].strip(),
-                "content": parts[1].strip()
-            })
+            parts = line.split("–") if "–" in line else line.split("-")
+            title = parts[0].strip() if parts else "Slide"
+            content = parts[1].strip() if len(parts) > 1 else ""
+            sections["Slides"].append({"title": title, "content": content})
         elif current:
             sections[current] += line + "\n"
 
-    # Generate files with fallback if section is missing
-    outline_path = save_doc(sections.get("Course Outline", "Outline not available."), "Course_Outline.docx")
+    # Save output files
+    outline_path = save_doc(sections.get("Course Outline", "Not generated."), "Course_Outline.docx")
     slides_path = save_ppt(sections.get("Slides", []), "Slides.pptx")
-    quiz_path = save_doc(sections.get("Quiz", "Quiz not available."), "Quiz.docx")
-    workbook_path = save_doc(sections.get("Workbook", "Workbook not available."), "Workbook.docx")
-    guide_path = save_doc(sections.get("Facilitator Guide", "Facilitator guide not available."), "Facilitator_Guide.docx")
+    quiz_path = save_doc(sections.get("Quiz", "Not generated."), "Quiz.docx")
+    workbook_path = save_doc(sections.get("Workbook", "Not generated."), "Workbook.docx")
+    guide_path = save_doc(sections.get("Facilitator Guide", "Not generated."), "Facilitator_Guide.docx")
 
-    # Display success + downloads
-    st.success(f"✅ Generated using {tokens} tokens | Estimated cost: ${cost:.4f}")
+    # Show downloads
+    st.success(f"✅ Course created using {tokens} tokens | Est. cost: ${cost:.4f}")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -132,3 +123,7 @@ Clearly label each section.
         st.download_button("👨‍🏫 Facilitator Guide", open(guide_path, "rb"), file_name="Facilitator_Guide.docx")
     with col3:
         st.download_button("📊 Slides (PPT)", open(slides_path, "rb"), file_name="Slides.pptx")
+
+    # Reset fields
+    st.session_state.clear()
+    st.rerun()
