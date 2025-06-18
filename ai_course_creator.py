@@ -5,11 +5,11 @@ from pptx import Presentation
 from pptx.util import Inches
 import os
 
-# Page settings
+# --- CONFIG ---
 st.set_page_config(page_title="AI Course Creator", layout="wide")
 openai.api_key = st.secrets["OPENAI_API_KEY"]
 
-# Helpers
+# --- HELPERS ---
 def estimate_cost(tokens):
     return round(tokens / 1000 * 0.01, 4)
 
@@ -31,50 +31,60 @@ def save_ppt(slides, filename):
     prs.save(filename)
     return filename
 
-# UI
-st.title("🧠 AI Training Course Creator")
-st.markdown("Create a structured, ready-to-use training course with GPT-4o.")
+# --- RESET SESSION ON FIRST LOAD ---
+if "form_reset" not in st.session_state:
+    st.session_state.form_reset = True
+    st.session_state.topic = ""
+    st.session_state.audience = ""
+    st.session_state.tone = "Select"
+    st.session_state.level = "Select"
+    st.session_state.duration = 60
 
+# --- UI HEADER ---
+st.title("🧠 AI Training Course Creator")
+st.markdown("Create a ready-to-use, structured training course using GPT-4o.")
+
+# --- FORM ---
 with st.form("course_form"):
-    topic = st.text_input("📝 Course Topic", value=st.session_state.get("topic", ""))
-    audience = st.text_input("🎯 Audience", value=st.session_state.get("audience", ""))
-    duration = st.number_input("⏳ Duration (minutes)", 30, 480, value=st.session_state.get("duration", 60))
-    tone = st.selectbox("🎤 Tone", ["Select", "Formal", "Conversational", "Inspiring"], index=st.session_state.get("tone_index", 0))
-    level = st.selectbox("📚 Difficulty Level", ["Select", "Beginner", "Intermediate", "Advanced"], index=st.session_state.get("level_index", 0))
+    topic = st.text_input("📝 Course Topic", key="topic")
+    audience = st.text_input("🎯 Audience", key="audience")
+    duration = st.number_input("⏳ Duration (minutes)", 30, 480, value=st.session_state.duration, key="duration")
+    tone = st.selectbox("🎤 Tone", ["Select", "Formal", "Conversational", "Inspiring"], key="tone")
+    level = st.selectbox("📚 Difficulty Level", ["Select", "Beginner", "Intermediate", "Advanced"], key="level")
     submit = st.form_submit_button("🚀 Generate Course")
 
-# Validate and process
+# --- SUBMIT ---
 if submit:
     if not topic or not audience or tone == "Select" or level == "Select":
         st.error("⚠️ Please fill in all fields before generating the course.")
         st.stop()
 
-    with st.spinner("Generating course..."):
+    with st.spinner("Generating your training course..."):
 
         prompt = f"""
-You are a world-class instructional designer. Create a {duration}-minute training course on "{topic}" for "{audience}". The tone should be {tone.lower()} and the audience level is {level.lower()}.
+You are a world-class instructional designer. Create a {duration}-minute training course on "{topic}" for "{audience}". The tone should be {tone.lower()} and the difficulty level is {level.lower()}.
 
-Provide:
-1. Course Outline with timings and training method per section (e.g., discussion, case study)
-2. PowerPoint slide content (title + bullets)
-3. A 6-question MCQ quiz with correct answers
-4. Workbook activities (second-person voice, reflection, role-play prompts)
-5. Facilitator Guide with instructions and timings
+Include:
+1. Course Outline with time blocks and method (activity, discussion, case study, etc.)
+2. PowerPoint slide content: title and bullet points per slide
+3. A 6-question quiz (MCQs) with correct answers marked
+4. Workbook activities in second person (e.g. "Reflect on...", "Write down...", "Discuss...")
+5. A detailed facilitator guide with instructions, tips, and timings
 
-Clearly label each section.
+Label each section clearly.
         """
 
         response = openai.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": prompt}],
+            messages=[{"role": "user", "content": prompt}],
             temperature=0.7
         )
 
-        output = response.choices[0].message.content
+        full_text = response.choices[0].message.content
         tokens = response.usage.total_tokens
         cost = estimate_cost(tokens)
 
-    # Split response
+    # --- PARSE RESPONSE ---
     sections = {
         "Course Outline": "",
         "Slides": [],
@@ -84,7 +94,7 @@ Clearly label each section.
     }
 
     current = None
-    for line in output.split("\n"):
+    for line in full_text.split("\n"):
         line = line.strip()
         if line.lower().startswith("1. course outline"):
             current = "Course Outline"
@@ -104,15 +114,15 @@ Clearly label each section.
         elif current:
             sections[current] += line + "\n"
 
-    # Save output files
+    # --- SAVE FILES ---
     outline_path = save_doc(sections.get("Course Outline", "Not generated."), "Course_Outline.docx")
     slides_path = save_ppt(sections.get("Slides", []), "Slides.pptx")
     quiz_path = save_doc(sections.get("Quiz", "Not generated."), "Quiz.docx")
     workbook_path = save_doc(sections.get("Workbook", "Not generated."), "Workbook.docx")
     guide_path = save_doc(sections.get("Facilitator Guide", "Not generated."), "Facilitator_Guide.docx")
 
-    # Show downloads
-    st.success(f"✅ Course created using {tokens} tokens | Est. cost: ${cost:.4f}")
+    # --- DISPLAY RESULTS ---
+    st.success(f"✅ Generated using {tokens} tokens | Estimated cost: ${cost:.4f}")
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -124,6 +134,6 @@ Clearly label each section.
     with col3:
         st.download_button("📊 Slides (PPT)", open(slides_path, "rb"), file_name="Slides.pptx")
 
-    # Reset fields
+    # --- RESET FORM STATE AFTER SUCCESS ---
     st.session_state.clear()
     st.rerun()
