@@ -4,3 +4,4 @@ python-docx
 python-pptx
 PyMuPDF
 docx2txt
+mammoth
