@@ -1,135 +1,136 @@
-import streamlit as st
 import os
-import openai
 import tempfile
-import fitz  # PyMuPDF for PDFs
-import docx2txt
-import mammoth  # For DOCX to text
-from pptx import Presentation
+import zipfile
+from typing import List
+
+import openai
+import streamlit as st
+from docx import Document
 from PyPDF2 import PdfReader
-from dotenv import load_dotenv
+from pptx import Presentation
 
-# Load OpenAI key from Streamlit Secrets or environment variable
-openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
+# Use the secret key from Streamlit Cloud if available
+openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else None
 
-st.set_page_config(page_title="AI Training Course Creator")
+st.set_page_config(page_title="AI Training Course Creator", layout="wide")
 st.title("🧠 AI Training Course Creator")
-st.write("Create a ready-to-use training course with AI.")
+st.caption("Create a ready-to-use training course with AI.")
 
-# ---- Form ----
-with st.form("course_form"):
-    topic = st.text_input("📝 Course Topic")
-    audience = st.text_input("🎯 Target Audience")
-    duration = st.number_input("⏱️ Duration (in minutes)", min_value=10, max_value=480, step=10)
-    tone = st.selectbox("✏️ Tone of Voice", ["Conversational", "Professional", "Inspiring", "Humorous"])
-    level = st.selectbox("📚 Depth of Content", ["Beginner", "Intermediate", "Advanced"])
-
-    uploaded_files = st.file_uploader("📤 Upload Reference Files (PDF, DOCX, PPTX)", accept_multiple_files=True, type=["pdf", "docx", "pptx"])
-    design_notes = st.text_area("🧠 Add Your Design Notes", placeholder="E.g. Include examples, models to use, type of activities expected")
-    feedback_notes = st.text_area("💬 Any feedback or changes for AI to consider? (optional)", placeholder="Add more interaction...")
-
-    submitted = st.form_submit_button("🚀 Generate Course")
-
-# ---- Helper Functions ----
-def extract_text_from_file(uploaded_file):
-    text = ""
-    suffix = uploaded_file.name.split(".")[-1].lower()
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
-
-    try:
-        if suffix == "pdf":
-            reader = PdfReader(tmp_path)
-            text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-        elif suffix == "docx":
-            text = docx2txt.process(tmp_path)
-        elif suffix == "pptx":
-            prs = Presentation(tmp_path)
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        text += shape.text + "\n"
-    except Exception as e:
-        text += f"\n[Error reading {uploaded_file.name}: {e}]"
-
-    return text
-
-def build_prompt():
-    files_text = "\n".join([extract_text_from_file(file) for file in uploaded_files]) if uploaded_files else ""
-
-    prompt = f"""
-You are an instructional designer. Based on the topic "{topic}" for the audience "{audience}" and a duration of {duration} minutes, generate:
-
-1. A detailed course outline (with session flow).
-2. A facilitator guide with key talking points and suggested activities.
-3. A quiz (5 questions) with answers.
-4. Two workbook activities.
-
-Tone: {tone}
-Level: {level}
-
-Incorporate these user notes if available:
-{design_notes}
-
-Reference content:
-{files_text}
-
-User feedback or changes to consider:
-{feedback_notes}
-"""
-    return prompt
-
-def save_to_doc(title, content):
-    from docx import Document
-    doc = Document()
-    doc.add_heading(title, 0)
-    for para in content.split("\n"):
-        doc.add_paragraph(para)
-    output_path = os.path.join(tempfile.gettempdir(), f"{title.replace(' ', '_')}.docx")
-    doc.save(output_path)
-    return output_path
-
-# ---- Process and Generate ----
-if submitted:
-    if not topic or not audience or not duration:
-        st.warning("Please fill in the required fields: topic, audience, duration.")
+# Optional: manually input API key if not set in secrets
+if not openai.api_key:
+    openai.api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
+    if not openai.api_key:
+        st.info("Please enter your OpenAI API key to proceed.")
         st.stop()
 
-    with st.spinner("Thinking hard... generating your course 🚧"):
-        try:
-            prompt = build_prompt()
+# Input fields
+topic = st.text_input("📝 Course Topic", "")
+audience = st.text_input("🎯 Target Audience", "")
+duration = st.number_input("⏰ Duration (in minutes)", min_value=30, max_value=480, step=15)
+tone = st.selectbox("🖋️ Tone of Voice", ["Professional", "Conversational", "Inspiring", "Authoritative"])
+depth = st.selectbox("📚 Depth of Content", ["Beginner", "Intermediate", "Advanced"])
 
+uploaded_files = st.file_uploader("📎 Upload Reference Files (PDF, DOCX, PPTX)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+user_notes = st.text_area("💡 Add Your Design Notes", placeholder="Any models to include, activities you want, case studies etc. (optional)")
+feedback = st.text_area("🗣️ Any feedback or changes for AI to consider? (optional)", placeholder="Add more interaction...")
+
+if st.button("🚀 Generate Course"):
+    with st.spinner("Creating your course materials..."):
+        # Process uploaded files
+        reference_texts = []
+        for file in uploaded_files:
+            if file.name.endswith(".pdf"):
+                reader = PdfReader(file)
+                text = "\n".join([page.extract_text() or "" for page in reader.pages])
+                reference_texts.append(text)
+            elif file.name.endswith(".docx"):
+                doc = Document(file)
+                text = "\n".join([para.text for para in doc.paragraphs])
+                reference_texts.append(text)
+            elif file.name.endswith(".pptx"):
+                prs = Presentation(file)
+                text = "\n".join(
+                    [shape.text for slide in prs.slides for shape in slide.shapes if hasattr(shape, "text")]
+                )
+                reference_texts.append(text)
+
+        # Combine inputs for prompt
+        prompt_parts = [
+            f"Design a training course for corporate learners.",
+            f"Topic: {topic}" if topic else "",
+            f"Target Audience: {audience}" if audience else "",
+            f"Duration: {duration} minutes" if duration else "",
+            f"Tone of Voice: {tone}",
+            f"Depth of Content: {depth}",
+            f"User Notes: {user_notes}" if user_notes else "",
+            f"Feedback to consider: {feedback}" if feedback else "",
+            "Here are some reference materials:\n" + "\n\n".join(reference_texts) if reference_texts else "",
+            "Please generate the following structured outputs:\n"
+            "1. Course Outline\n2. Facilitator Guide\n3. Quiz with answers\n4. Activities with instructions"
+        ]
+        prompt = "\n".join([p for p in prompt_parts if p])
+
+        # OpenAI Call
+        try:
             response = openai.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.7
+                temperature=0.7,
             )
-
-            content = response.choices[0].message.content if hasattr(response.choices[0], 'message') else response.choices[0].text
-
-            if not content or len(content.strip()) < 20:
-                st.error("AI did not return valid course content. Please try again with more input or better references.")
-                st.stop()
-
-            # Split content
-            parts = content.split("\n\n")
-            outline = next((p for p in parts if "outline" in p.lower()), "No outline found.")
-            guide = next((p for p in parts if "facilitator" in p.lower()), "No facilitator guide found.")
-            quiz = next((p for p in parts if "quiz" in p.lower()), "No quiz found.")
-            activities = next((p for p in parts if "activity" in p.lower()), "No activities found.")
-
-            files = {
-                "Course_Outline.docx": save_to_doc("Course Outline", outline),
-                "Facilitator_Guide.docx": save_to_doc("Facilitator Guide", guide),
-                "Quiz.docx": save_to_doc("Quiz", quiz),
-                "Workbook_Activities.docx": save_to_doc("Workbook Activities", activities)
-            }
-
-            st.success("✅ Your course has been generated!")
-            for filename, path in files.items():
-                with open(path, "rb") as f:
-                    st.download_button(f"⬇️ Download {filename}", f, file_name=filename)
-
         except Exception as e:
-            st.error(f"Something went wrong: {e}")
+            st.error(f"OpenAI Error: {e}")
+            st.stop()
+
+        content = response.choices[0].message.content
+
+        # Split generated content
+        sections = {
+            "Course_Outline": "",
+            "Facilitator_Guide": "",
+            "Quiz": "",
+            "Activities": ""
+        }
+        current_section = None
+        for line in content.split("\n"):
+            line_lower = line.lower().strip()
+            if "course outline" in line_lower:
+                current_section = "Course_Outline"
+            elif "facilitator guide" in line_lower:
+                current_section = "Facilitator_Guide"
+            elif "quiz" in line_lower:
+                current_section = "Quiz"
+            elif "activities" in line_lower:
+                current_section = "Activities"
+            elif current_section:
+                sections[current_section] += line + "\n"
+
+        # Save to files
+        def save_doc(text, filename):
+            doc = Document()
+            doc.add_heading(filename.replace("_", " ").replace(".docx", ""), level=1)
+            for para in text.strip().split("\n"):
+                doc.add_paragraph(para)
+            path = os.path.join(tempfile.gettempdir(), filename)
+            doc.save(path)
+            return path
+
+        files = []
+        for name, content in sections.items():
+            filepath = save_doc(content, f"{name}.docx")
+            files.append(filepath)
+
+        # ZIP all files
+        zip_path = os.path.join(tempfile.gettempdir(), "Course_Materials.zip")
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for f in files:
+                zipf.write(f, os.path.basename(f))
+
+        # File Downloads
+        for f in files:
+            with open(f, "rb") as file:
+                st.download_button(f"📥 Download {os.path.basename(f)}", file.read(), file_name=os.path.basename(f))
+
+        with open(zip_path, "rb") as zipf:
+            st.download_button("📦 Download All as ZIP", zipf.read(), file_name="Course_Materials.zip")
+
+        st.success("✅ Course generated successfully!")
