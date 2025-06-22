@@ -1,118 +1,135 @@
 import streamlit as st
 import os
-import tempfile
-import docx
 import openai
-import fitz  # PyMuPDF for PDF
+import tempfile
+import fitz  # PyMuPDF for PDFs
+import docx2txt
+import mammoth  # For DOCX to text
 from pptx import Presentation
-from docx import Document
+from PyPDF2 import PdfReader
+from dotenv import load_dotenv
 
-# Initialize OpenAI client
-client = openai.OpenAI()
+# Load OpenAI key from Streamlit Secrets or environment variable
+openai.api_key = st.secrets["OPENAI_API_KEY"] if "OPENAI_API_KEY" in st.secrets else os.getenv("OPENAI_API_KEY")
 
-st.set_page_config(page_title="AI Course Creator", layout="centered")
+st.set_page_config(page_title="AI Training Course Creator")
 st.title("🧠 AI Training Course Creator")
 st.write("Create a ready-to-use training course with AI.")
 
-api_key = os.getenv("OPENAI_API_KEY")
-if not api_key:
-    st.warning("OpenAI API key not found in environment. Please set it in Streamlit secrets.")
-    st.stop()
+# ---- Form ----
+with st.form("course_form"):
+    topic = st.text_input("📝 Course Topic")
+    audience = st.text_input("🎯 Target Audience")
+    duration = st.number_input("⏱️ Duration (in minutes)", min_value=10, max_value=480, step=10)
+    tone = st.selectbox("✏️ Tone of Voice", ["Conversational", "Professional", "Inspiring", "Humorous"])
+    level = st.selectbox("📚 Depth of Content", ["Beginner", "Intermediate", "Advanced"])
 
-# Collect inputs from the user
-topic = st.text_input("🗋 Course Topic")
-audience = st.text_input("🍒 Target Audience")
-duration = st.number_input("⏱️ Duration (in minutes)", min_value=15, max_value=480, step=15)
-tone = st.selectbox("🎮 Tone of Voice", ["Professional", "Conversational", "Inspiring", "Authoritative"])
-depth = st.selectbox("🎓 Depth of Content", ["Beginner", "Intermediate", "Advanced"])
+    uploaded_files = st.file_uploader("📤 Upload Reference Files (PDF, DOCX, PPTX)", accept_multiple_files=True, type=["pdf", "docx", "pptx"])
+    design_notes = st.text_area("🧠 Add Your Design Notes", placeholder="E.g. Include examples, models to use, type of activities expected")
+    feedback_notes = st.text_area("💬 Any feedback or changes for AI to consider? (optional)", placeholder="Add more interaction...")
 
-st.markdown("**📂 Upload Reference Files (PDF, DOCX, PPTX)**")
-uploaded_files = st.file_uploader("Drag and drop files here", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+    submitted = st.form_submit_button("🚀 Generate Course")
 
-design_notes = st.text_area("**🧠 Add Your Design Notes**", help="Add any specific instructions or references for the AI (optional)")
-review_feedback = st.text_area("**Any feedback or changes for AI to consider? (optional)**")
+# ---- Helper Functions ----
+def extract_text_from_file(uploaded_file):
+    text = ""
+    suffix = uploaded_file.name.split(".")[-1].lower()
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}") as tmp:
+        tmp.write(uploaded_file.read())
+        tmp_path = tmp.name
 
-if st.button("🚀 Generate Course"):
-    if not topic or not audience:
-        st.error("Please fill in at least the course topic and audience.")
+    try:
+        if suffix == "pdf":
+            reader = PdfReader(tmp_path)
+            text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+        elif suffix == "docx":
+            text = docx2txt.process(tmp_path)
+        elif suffix == "pptx":
+            prs = Presentation(tmp_path)
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text"):
+                        text += shape.text + "\n"
+    except Exception as e:
+        text += f"\n[Error reading {uploaded_file.name}: {e}]"
+
+    return text
+
+def build_prompt():
+    files_text = "\n".join([extract_text_from_file(file) for file in uploaded_files]) if uploaded_files else ""
+
+    prompt = f"""
+You are an instructional designer. Based on the topic "{topic}" for the audience "{audience}" and a duration of {duration} minutes, generate:
+
+1. A detailed course outline (with session flow).
+2. A facilitator guide with key talking points and suggested activities.
+3. A quiz (5 questions) with answers.
+4. Two workbook activities.
+
+Tone: {tone}
+Level: {level}
+
+Incorporate these user notes if available:
+{design_notes}
+
+Reference content:
+{files_text}
+
+User feedback or changes to consider:
+{feedback_notes}
+"""
+    return prompt
+
+def save_to_doc(title, content):
+    from docx import Document
+    doc = Document()
+    doc.add_heading(title, 0)
+    for para in content.split("\n"):
+        doc.add_paragraph(para)
+    output_path = os.path.join(tempfile.gettempdir(), f"{title.replace(' ', '_')}.docx")
+    doc.save(output_path)
+    return output_path
+
+# ---- Process and Generate ----
+if submitted:
+    if not topic or not audience or not duration:
+        st.warning("Please fill in the required fields: topic, audience, duration.")
         st.stop()
 
-    with st.spinner("Generating your course materials..."):
-
-        def extract_text(file):
-            ext = file.name.split(".")[-1].lower()
-            text = ""
-            if ext == "pdf":
-                doc = fitz.open(stream=file.read(), filetype="pdf")
-                for page in doc:
-                    text += page.get_text()
-            elif ext == "docx":
-                doc = Document(file)
-                text = "\n".join([para.text for para in doc.paragraphs])
-            elif ext == "pptx":
-                prs = Presentation(file)
-                for slide in prs.slides:
-                    for shape in slide.shapes:
-                        if hasattr(shape, "text"):
-                            text += shape.text + "\n"
-            return text.strip()
-
-        # Compile uploaded content
-        reference_texts = []
-        for file in uploaded_files:
-            try:
-                ref_text = extract_text(file)
-                reference_texts.append(ref_text)
-            except Exception as e:
-                reference_texts.append(f"Error reading {file.name}: {str(e)}")
-
-        # Compose prompt
-        prompt = f"""
-You are a professional instructional designer. Create a course on the topic "{topic}" for the audience "{audience}".
-Duration of the course should be around {duration} minutes.
-The tone of voice should be {tone}, and the depth of content should be {depth}.
-Use the following references and user notes:
-{design_notes}
-{review_feedback}
-"""
-        if reference_texts:
-            prompt += "\n\nREFERENCE CONTENT:\n" + "\n\n".join(reference_texts)
-
+    with st.spinner("Thinking hard... generating your course 🚧"):
         try:
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            full_text = response.choices[0].message.content.strip()
+            prompt = build_prompt()
 
-            def save_doc(text, filename):
-                doc_path = os.path.join(tempfile.gettempdir(), filename)
-                doc = Document()
-                for para in text.split("\n"):
-                    doc.add_paragraph(para)
-                doc.save(doc_path)
-                return doc_path
+            response = openai.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+
+            content = response.choices[0].message.content if hasattr(response.choices[0], 'message') else response.choices[0].text
+
+            if not content or len(content.strip()) < 20:
+                st.error("AI did not return valid course content. Please try again with more input or better references.")
+                st.stop()
 
             # Split content
-            sections = {
-                "Course_Outline": "Course Outline",
-                "Facilitator_Guide": "Facilitator Guide",
-                "Participant_Handout": "Participant Handout"
-            }
-            generated_files = []
-            for key, section in sections.items():
-                if section.lower() in full_text.lower():
-                    part = full_text.split(section)[-1].strip().split("\n\n")[0:5]
-                    doc_path = save_doc("\n\n".join(part), f"{key}.docx")
-                    generated_files.append(doc_path)
+            parts = content.split("\n\n")
+            outline = next((p for p in parts if "outline" in p.lower()), "No outline found.")
+            guide = next((p for p in parts if "facilitator" in p.lower()), "No facilitator guide found.")
+            quiz = next((p for p in parts if "quiz" in p.lower()), "No quiz found.")
+            activities = next((p for p in parts if "activity" in p.lower()), "No activities found.")
 
-            for path in generated_files:
-                st.download_button(
-                    label=f"📄 Download {os.path.basename(path)}",
-                    data=open(path, "rb").read(),
-                    file_name=os.path.basename(path),
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+            files = {
+                "Course_Outline.docx": save_to_doc("Course Outline", outline),
+                "Facilitator_Guide.docx": save_to_doc("Facilitator Guide", guide),
+                "Quiz.docx": save_to_doc("Quiz", quiz),
+                "Workbook_Activities.docx": save_to_doc("Workbook Activities", activities)
+            }
+
+            st.success("✅ Your course has been generated!")
+            for filename, path in files.items():
+                with open(path, "rb") as f:
+                    st.download_button(f"⬇️ Download {filename}", f, file_name=filename)
 
         except Exception as e:
-            st.error(f"An error occurred: {e}")
+            st.error(f"Something went wrong: {e}")
