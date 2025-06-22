@@ -1,127 +1,100 @@
 import streamlit as st
-from openai import OpenAI              # new style client
-from docx import Document
+import fitz  # PyMuPDF for PDF
+import docx
 from pptx import Presentation
-from pptx.util import Pt
-from io import BytesIO
-from zipfile import ZipFile, ZIP_DEFLATED
+import openai
 import os
 
-# ───────────────────────── App / Key ─────────────────────────
-st.set_page_config(page_title="AI Course Creator", layout="centered")
-st.title("🧠 AI Training Course Creator")
+# ---------------- UI ----------------
+st.set_page_config(page_title="AI Course Creator", layout="wide")
+st.title("🎓 AI Course Creator")
+st.write("Generate training courses using your notes or reference files (PDF, Word, PPT).")
 
-if "OPENAI_API_KEY" not in st.secrets:
-    st.error("Add OPENAI_API_KEY in Secrets before running.")
+# -------------- API Key --------------
+openai_api_key = st.text_input("🔑 Enter your OpenAI API Key", type="password")
+if not openai_api_key:
+    st.warning("Please enter your API key to continue.")
     st.stop()
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+# -------------- User Inputs --------------
+course_topic = st.text_input("📘 Course Topic")
+audience = st.text_input("👥 Target Audience")
+duration = st.number_input("⏱️ Duration in minutes", min_value=15, max_value=300, value=60)
+tone = st.selectbox("🎯 Tone", ["Conversational", "Formal", "Inspirational"])
+difficulty = st.selectbox("📚 Difficulty", ["Beginner", "Intermediate", "Advanced"])
+user_notes = st.text_area("📝 Your Notes (models, examples, activities, etc.)")
 
-# ───────────────────────── Form ──────────────────────────────
-with st.form("course_form"):
-    topic    = st.text_input("📚 Course Topic")
-    audience = st.text_input("👥 Target Audience")
-    duration = st.number_input("⏳ Duration (minutes)", 30, 480, step=15)
-    tone     = st.selectbox("🎤 Tone", ["Formal", "Conversational", "Inspiring"])
-    level    = st.selectbox("🎚 Complexity", ["Beginner", "Intermediate", "Advanced"])
-    submitted = st.form_submit_button("🚀 Generate Course")
+# -------------- File Uploads --------------
+uploaded_files = st.file_uploader("📂 Upload reference files (PDF, DOCX, PPTX)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
 
-# ───────────────────────── Helpers ───────────────────────────
-def save_doc(text, fname):
-    doc = Document()
-    for block in text.split("\n\n"):
-        doc.add_paragraph(block)
-    doc.save(fname); return fname
+# -------------- File Parsing Functions --------------
+def extract_text_from_file(file):
+    if file.name.endswith(".pdf"):
+        doc = fitz.open(stream=file.read(), filetype="pdf")
+        return "\n".join([page.get_text() for page in doc])
+    elif file.name.endswith(".docx"):
+        doc = docx.Document(file)
+        return "\n".join([para.text for para in doc.paragraphs])
+    elif file.name.endswith(".pptx"):
+        prs = Presentation(file)
+        slides_text = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    slides_text.append(shape.text)
+        return "\n".join(slides_text)
+    return ""
 
-def save_ppt(text, fname):
-    prs = Presentation()
-    for chunk in text.split("\n\n"):
-        lines = [l.strip("• ").strip() for l in chunk.split("\n") if l.strip()]
-        if not lines: continue
-        s = prs.slides.add_slide(prs.slide_layouts[1])
-        s.shapes.title.text = lines[0]
-        s.placeholders[1].text = "\n".join(lines[1:])
-    prs.save(fname); return fname
+# -------------- Generate Button --------------
+if st.button("🚀 Generate Course"):
 
-def zip_bytes(files: dict):
-    buf = BytesIO()
-    with ZipFile(buf, "w", ZIP_DEFLATED) as z:
-        for arc, p in files.items(): z.write(p, arcname=arc)
-    buf.seek(0); return buf
+    # Extract content from uploaded files
+    reference_texts = []
+    if uploaded_files:
+        for file in uploaded_files:
+            with st.spinner(f"Reading {file.name}..."):
+                try:
+                    ref = extract_text_from_file(file)
+                    reference_texts.append(ref)
+                except Exception as e:
+                    st.error(f"Error reading {file.name}: {e}")
+    
+    combined_refs = "\n\n---\n\n".join(reference_texts)
+    combined_refs = combined_refs[:2000]  # Limit to 2000 chars
 
-# ───────────────────────── Generate ──────────────────────────
-if submitted:
-    if not (topic and audience):
-        st.error("Please fill every field."); st.stop()
-
+    # Build prompt
     prompt = f"""
-Design a {duration}-minute course on "{topic}" for {audience}.
-Tone: {tone.lower()}, Level: {level.lower()}.
+You are an expert instructional designer.
 
-Return **exactly** these 5 sections each under an H3 header:
+Generate a detailed training course on the topic: "{course_topic}".
+Audience: {audience}
+Duration: {duration} minutes
+Tone: {tone}
+Difficulty: {difficulty}
 
-### Course_Outline
-Module title | hh:mm | objective(s) | delivery method | brief description
+User Notes:
+{user_notes}
 
-### Slides
-Slide 1 Title
-• bullet
-• bullet
-
-### Quiz
-5 MCQs, 4 options, mark correct.
-
-### Workbook
-Second-person exercises, blanks, 1 role-play scenario.
-
-### Facilitator_Guide
-Step-by-step timings, questions, tips.
+Reference Material Extracted:
+{combined_refs}
 """
 
-    with st.spinner("Generating…"):
-        rsp = client.chat.completions.create(
+    # -------------- Call OpenAI API --------------
+    try:
+        openai.api_key = openai_api_key
+        response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[{"role": "user", "content": prompt}]
         )
+        course = response.choices[0].message.content
+        token_used = response.usage.total_tokens
+        cost_estimate = round(token_used * 0.00001, 4)
 
-    text   = rsp.choices[0].message.content
-    tokens = rsp.usage.total_tokens
-    cost   = round(tokens / 1000 * 0.01, 4)
-    st.success(f"✅ Done – {tokens} tokens (~${cost})")
+        st.success("✅ Course Generated!")
+        st.markdown("### 📄 Course Output")
+        st.markdown(course)
 
-    def section(name):
-        tag = f"### {name}"
-        return text.split(tag)[1].split("###")[0].strip() if tag in text else ""
+        st.info(f"Used {token_used} tokens · Estimated cost: ${cost_estimate}")
 
-    outline = section("Course_Outline")
-    slides  = section("Slides")
-    quiz    = section("Quiz")
-    workbk  = section("Workbook")
-    guide   = section("Facilitator_Guide")
-
-    outline_p = save_doc(outline, "Course_Outline.docx")
-    slides_p  = save_ppt(slides,  "Slides.pptx")
-    quiz_p    = save_doc(quiz,    "Quiz.docx")
-    work_p    = save_doc(workbk,  "Workbook.docx")
-    guide_p   = save_doc(guide,   "Facilitator_Guide.docx")
-
-    # download buttons
-    for label, path in [
-        ("Outline", outline_p), ("Slides", slides_p),
-        ("Quiz", quiz_p), ("Workbook", work_p),
-        ("Facilitator Guide", guide_p)
-    ]:
-        st.download_button(f"📥 {label}", open(path, "rb"),
-                           file_name=os.path.basename(path),
-                           mime="application/octet-stream")
-
-    # zip
-    zip_buf = zip_bytes({
-        "Course_Outline.docx": outline_p,
-        "Slides.pptx": slides_p,
-        "Quiz.docx": quiz_p,
-        "Workbook.docx": work_p,
-        "Facilitator_Guide.docx": guide_p,
-    })
-    st.download_button("📦 ALL files (.zip)", zip_buf,
-                       file_name="AI_Course.zip", mime="application/zip")
+    except Exception as e:
+        st.error(f"Error generating course: {e}")
