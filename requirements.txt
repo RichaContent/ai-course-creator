@@ -6,3 +6,4 @@ PyMuPDF
 docx2txt
 mammoth
 PyPDF2
+python-dotenv
