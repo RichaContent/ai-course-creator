@@ -1,23 +1,41 @@
-# AI Course Creator 🧠📚
+# AI Course Creator 🚀
 
-This is an AI-powered app that automates the creation of corporate training courses. Built using Streamlit and OpenAI, it helps instructional designers generate:
+**Like Canva, but for Corporate Trainers.**
 
-- Course Outline with timing
-- Facilitator Guide
-- PowerPoint Slide Deck
-- Quiz (with correct answers)
-- Workbook Activities
+This app lets trainers, instructional designers, and L&D professionals generate full training courses in minutes — including:
 
-### 🔧 How It Works
+- 📋 Course Outline (in table format)
+- 📖 Participant Workbook (with activities)
+- 🧠 MCQ/True-False Quizzes (with answer key)
+- 🎓 Facilitator Guide (combined with workbook activities)
+- 📦 All files downloadable individually or in a ZIP
 
-1. Input your course topic, audience, goals, and duration.
-2. The AI generates all training content.
-3. Download cleanly formatted files in Word and PowerPoint.
+---
 
-### 📦 Requirements
+## 🔧 Features
 
-To run locally:
+- Choose a topic, audience, tone, and duration
+- Upload reference docs (Word, PDF, PPT) — optional
+- Add your own notes or suggestions — optional
+- Review generated content and request tweaks — optional
+- Accurate token usage and cost estimate
+- No coding required. Just click and create.
 
-```bash
-pip install -r requirements.txt
-streamlit run ai_course_creator.py
+---
+
+## 💡 Use Case
+
+Ideal for:
+- Corporate trainers
+- HR and L&D professionals
+- Instructional designers
+- Consultants building learning content
+
+---
+
+## 🔐 Secrets Configuration
+
+To deploy securely on Streamlit Cloud, go to your app’s **Settings > Secrets** and add:
+
+```toml
+OPENAI_API_KEY = "your-openai-api-key"
