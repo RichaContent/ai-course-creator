@@ -58,7 +58,6 @@ with st.form("course_form"):
     topic = st.text_input("Course Topic")
     audience = st.text_input("Target Audience")
     duration = st.text_input("Course Duration (minutes or hours)")
-    objectives = st.text_area("Learning Objectives (bullet points)", placeholder="- Learn resilience\n- Apply frameworks")
     tone = st.selectbox("Preferred Tone", ["Formal", "Conversational", "Inspiring"], index=0)
     depth = st.selectbox("Depth of Content", ["Beginner", "Intermediate", "Advanced"], index=0)
 
@@ -78,8 +77,6 @@ if submitted:
         # Build prompt
         prompt = f"""
 Create a {duration} training course on "{topic}" for {audience}.
-Learning objectives:
-{objectives}
 
 Tone: {tone}
 Depth: {depth}
