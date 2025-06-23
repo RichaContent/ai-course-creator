@@ -1,85 +1,81 @@
-# AI Course Creator - Final Updated Script
+# AI Course Creator - Final Streamlit Script with All Features
 
 import streamlit as st
 import openai
 import os
 import tempfile
+from io import BytesIO
+import zipfile
 import mammoth
 import PyPDF2
 import docx2txt
 from pptx import Presentation
 from docx import Document
-from io import BytesIO
 from dotenv import load_dotenv
-import zipfile
 
 # Load environment variables
 load_dotenv()
 
-# App Title
+# Set up page
 st.set_page_config(page_title="AI Course Creator")
 st.title("📚 AI Course Creator")
 
-# Load OpenAI API Key
+# API Key handling
 api_key = os.getenv("OPENAI_API_KEY")
-
 if not api_key:
-    api_key = st.text_input("Enter your OpenAI API Key", type="password", key="api_key")
-
-if not api_key:
-    st.warning("Please enter your OpenAI API key to proceed.")
-    st.stop()
-
+    api_key = st.text_input("Enter your OpenAI API Key", type="password")
+    if not api_key:
+        st.warning("Please enter your OpenAI API Key to proceed.")
+        st.stop()
 openai.api_key = api_key
 
 # User Inputs
 st.header("Step 1: Course Details")
-topic = st.text_input("Course Topic", key="topic")
-audience = st.text_input("Target Audience (e.g., Mid-Level Managers)", key="audience")
-duration = st.slider("Duration (in minutes)", 30, 300, 90, step=30, key="duration")
-tonality = st.selectbox("Preferred Tonality", ["Professional", "Conversational", "Inspirational", "Academic"], key="tone")
+topic = st.text_input("Course Topic")
+audience = st.text_input("Target Audience")
+duration = st.slider("Course Duration (minutes)", 30, 300, 90, step=30)
+tonality = st.selectbox("Preferred Tonality", ["Professional", "Conversational", "Inspirational", "Academic"])
 
 # Optional Inputs
-st.header("Step 2 (Optional): Add References")
-uploaded_files = st.file_uploader("Upload Reference Files (PDF, Word, PPT)", accept_multiple_files=True)
-user_notes = st.text_area("Add Notes or Specific Requirements")
+st.header("Step 2 (Optional): Add Reference Files or Notes")
+uploaded_files = st.file_uploader("Upload reference files (PDF, Word, PPT)", accept_multiple_files=True)
+user_notes = st.text_area("Your Notes or Suggestions")
+feedback = st.text_area("Feedback for Revisions (optional)")
 
-# Feedback
-st.header("Step 3 (Optional): Feedback for Revisions")
-feedback = st.text_area("Any feedback to revise the course (if applicable)?")
-
+# Generate course button
 if st.button("Generate Course Materials"):
-    with st.spinner("Generating course content..."):
+    with st.spinner("Generating content..."):
 
-        # Extract uploaded content
         extracted_text = ""
-        for uploaded_file in uploaded_files:
-            if uploaded_file.name.endswith(".pdf"):
-                reader = PyPDF2.PdfReader(uploaded_file)
+        for file in uploaded_files:
+            if file.name.endswith(".pdf"):
+                reader = PyPDF2.PdfReader(file)
                 extracted_text += "\n".join([page.extract_text() or '' for page in reader.pages])
-            elif uploaded_file.name.endswith(".docx"):
-                extracted_text += docx2txt.process(uploaded_file)
-            elif uploaded_file.name.endswith(".pptx"):
-                ppt = Presentation(uploaded_file)
+            elif file.name.endswith(".docx"):
+                extracted_text += docx2txt.process(file)
+            elif file.name.endswith(".pptx"):
+                ppt = Presentation(file)
                 for slide in ppt.slides:
                     for shape in slide.shapes:
                         if hasattr(shape, "text"):
                             extracted_text += shape.text + "\n"
 
-        # Construct the prompt
-        prompt = f"""
-        Create a {duration}-minute training course on the topic: "{topic}" for the audience: {audience}.
-        Use a {tonality.lower()} tone.
-        Include:
-        - A course outline in table format with timings and type of delivery (e.g., lecture, case study, role play)
-        - A well-structured facilitator guide with session objectives, key messages, transitions, and instructions
-        - A participant workbook with clear instructions, reflective exercises, and role-play scenarios (not full scripts)
-        - A quiz with a mix of MCQs, MMCQs, and True/False questions, including an answer key
-        {f"- Refer to these notes: {user_notes}" if user_notes else ""}
-        {f"- Revise based on this feedback: {feedback}" if feedback else ""}
-        {f"- Reference the following text: {extracted_text}" if extracted_text else ""}
-        Return the content in structured form, clearly labeled as: Course_Outline, Facilitator_Guide, Workbook, Quiz.
-        """
+        prompt = f'''
+        Create a {duration}-minute training course on "{topic}" for {audience}.
+        Tone: {tonality}.
+
+        Deliverables:
+        1. Course_Outline: Tabular format with time allocations and delivery method (e.g., lecture, role play, case study).
+        2. Facilitator_Guide: Objectives, transitions, instructions, sample debriefs.
+        3. Participant_Workbook: Reflective prompts, space for responses, instructions in second person.
+        4. Quiz: 5 MCQs, 2 MMCQs (multiple correct), 3 True/False with answer key.
+        5. Slide_Deck: 1 slide per key idea.
+        {f"Include these notes: {user_notes}" if user_notes else ""}
+        {f"Revise with this feedback: {feedback}" if feedback else ""}
+        {f"Incorporate these references: {extracted_text}" if extracted_text else ""}
+
+        Return each section clearly marked with headers: ### Course_Outline, ### Facilitator_Guide, ### Participant_Workbook, ### Quiz, ### Slide_Deck.
+        '''
 
         try:
             response = openai.ChatCompletion.create(
@@ -88,50 +84,71 @@ if st.button("Generate Course Materials"):
             )
             content = response.choices[0].message.content
 
-            # Parse response into sections
-            sections = {"Course_Outline": "", "Facilitator_Guide": "", "Workbook": "", "Quiz": ""}
+            # Parse output
+            sections = {"Course_Outline": "", "Facilitator_Guide": "", "Participant_Workbook": "", "Quiz": "", "Slide_Deck": ""}
             current = None
             for line in content.splitlines():
-                if any(title in line for title in sections):
-                    current = [key for key in sections if key in line][0]
-                elif current:
-                    sections[current] += line + "\n"
+                for key in sections:
+                    if f"### {key}" in line:
+                        current = key
+                        break
+                else:
+                    if current:
+                        sections[current] += line + "\n"
 
-            # Save files
-            def save_doc(text, filename):
+            # Save Word files
+            def save_doc(name, text):
                 doc = Document()
                 for line in text.strip().splitlines():
                     doc.add_paragraph(line)
-                path = os.path.join(tempfile.gettempdir(), filename)
+                path = os.path.join(tempfile.gettempdir(), name)
                 doc.save(path)
                 return path
 
-            outline_path = save_doc(sections["Course_Outline"], "Course_Outline.docx")
-            guide_path = save_doc(sections["Facilitator_Guide"], "Facilitator_Guide.docx")
-            workbook_path = save_doc(sections["Workbook"], "Participant_Workbook.docx")
-            quiz_path = save_doc(sections["Quiz"], "Quiz.docx")
+            paths = {}
+            paths['outline'] = save_doc("Course_Outline.docx", sections["Course_Outline"])
+            paths['guide'] = save_doc("Facilitator_Guide.docx", sections["Facilitator_Guide"])
+            paths['workbook'] = save_doc("Participant_Workbook.docx", sections["Participant_Workbook"])
+            paths['quiz'] = save_doc("Quiz.docx", sections["Quiz"])
 
-            # Create ZIP file
+            # Create slide deck
+            ppt = Presentation()
+            for line in sections['Slide_Deck'].split('\n'):
+                if line.strip():
+                    slide = ppt.slides.add_slide(ppt.slide_layouts[1])
+                    slide.shapes.title.text = topic
+                    slide.placeholders[1].text = line.strip()
+            ppt_path = os.path.join(tempfile.gettempdir(), "Slide_Deck.pptx")
+            ppt.save(ppt_path)
+            paths['slides'] = ppt_path
+
+            # Create ZIP
             zip_buffer = BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-                zip_file.write(outline_path, "Course_Outline.docx")
-                zip_file.write(guide_path, "Facilitator_Guide.docx")
-                zip_file.write(workbook_path, "Participant_Workbook.docx")
-                zip_file.write(quiz_path, "Quiz.docx")
-
+            with zipfile.ZipFile(zip_buffer, "w") as z:
+                for label, path in paths.items():
+                    z.write(path, os.path.basename(path))
             zip_buffer.seek(0)
-            st.success("Course materials generated successfully!")
 
+            st.success("✅ Course materials generated!")
+
+            # Previews (limited)
+            st.subheader("Preview")
+            st.text_area("Course Outline", sections["Course_Outline"], height=200)
+            st.text_area("Quiz", sections["Quiz"], height=200)
+
+            # Downloads
             st.download_button("📥 Download All as ZIP", data=zip_buffer, file_name="Course_Materials.zip")
-            st.download_button("Download Course Outline", open(outline_path, "rb"), file_name="Course_Outline.docx")
-            st.download_button("Download Facilitator Guide", open(guide_path, "rb"), file_name="Facilitator_Guide.docx")
-            st.download_button("Download Workbook", open(workbook_path, "rb"), file_name="Participant_Workbook.docx")
-            st.download_button("Download Quiz", open(quiz_path, "rb"), file_name="Quiz.docx")
+            st.download_button("Download Course Outline", open(paths['outline'], "rb"), file_name="Course_Outline.docx")
+            st.download_button("Download Facilitator Guide", open(paths['guide'], "rb"), file_name="Facilitator_Guide.docx")
+            st.download_button("Download Workbook", open(paths['workbook'], "rb"), file_name="Participant_Workbook.docx")
+            st.download_button("Download Quiz", open(paths['quiz'], "rb"), file_name="Quiz.docx")
+            st.download_button("Download Slide Deck", open(paths['slides'], "rb"), file_name="Slide_Deck.pptx")
 
-            # Token usage estimation
-            tokens_used = response.usage.total_tokens
-            cost_estimate = round(tokens_used / 1000 * 0.01, 4)
-            st.caption(f"Used {tokens_used} tokens · Estimated cost: ${cost_estimate:.4f}")
+            # Token use
+            if hasattr(response, "usage"):
+                tokens_used = response.usage.total_tokens
+                cost_est = round(tokens_used / 1000 * 0.01, 4)
+                st.caption(f"Used {tokens_used} tokens. Estimated cost: ${cost_est:.4f}")
 
         except Exception as e:
-            st.error(f"An error occurred: {e}")
+            st.error(f"Error: {e}")
