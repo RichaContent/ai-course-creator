@@ -1,159 +1,129 @@
-# ai_course_creator_app.py
+# AI Course Creator - Final Working Script (Streamlit Cloud Compatible)
 
 import streamlit as st
-import openai
+from openai import OpenAI
 import os
 import tempfile
+import docx2txt
+import PyPDF2
 from pptx import Presentation
-from pptx.util import Inches, Pt
 from docx import Document
 from io import BytesIO
 import zipfile
-from PyPDF2 import PdfReader
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Load API Key from Secrets
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
 
-# Set Streamlit page config
+# Streamlit Page Setup
 st.set_page_config(page_title="AI Course Creator")
 st.title("📚 AI Course Creator")
 
-# API Key
-api_key = os.getenv("OPENAI_API_KEY") or st.text_input("Enter your OpenAI API Key", type="password")
+# Backup: Allow Manual API Key Entry (Optional)
 if not api_key:
-    st.warning("Please enter your OpenAI API key to continue.")
-    st.stop()
-openai.api_key = api_key
+    api_key = st.text_input("Enter OpenAI API Key", type="password")
+    if not api_key:
+        st.warning("API key required.")
+        st.stop()
+    client = OpenAI(api_key=api_key)
 
-# Step 1: Course Inputs
-st.header("Step 1: Course Information")
+# Inputs
+st.header("Step 1: Course Details")
 topic = st.text_input("Course Topic")
-audience = st.text_input("Target Audience")
-duration = st.slider("Course Duration (minutes)", 30, 300, 90, 15)
-tonality = st.selectbox("Preferred Tonality", ["Professional", "Conversational", "Inspirational", "Academic"])
+audience = st.text_input("Target Audience (e.g., Mid-Level Managers)")
+duration = st.slider("Duration (minutes)", 30, 300, 90, 30)
+tone = st.selectbox("Tone", ["Professional", "Conversational", "Inspirational", "Academic"])
 
-# Step 2: Optional Inputs
-st.header("Step 2 (Optional): Upload Reference Files and Notes")
-user_files = st.file_uploader("Upload Files (PDF, DOCX, PPTX)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
-user_notes = st.text_area("Your Notes or Custom Instructions")
-feedback = st.text_area("Prior Feedback to Consider")
+st.header("Step 2: (Optional) Upload References")
+uploaded_files = st.file_uploader("Upload PDFs, Word, or PPTX", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+user_notes = st.text_area("Optional Notes")
+feedback = st.text_area("Any Feedback (Optional)")
 
-# Helper: Extract content from files
-def extract_text_from_files(files):
-    full_text = ""
-    for file in files:
-        if file.name.endswith(".pdf"):
-            reader = PdfReader(file)
-            for page in reader.pages:
-                full_text += page.extract_text() or ""
-        elif file.name.endswith(".docx"):
-            doc = Document(file)
-            for para in doc.paragraphs:
-                full_text += para.text + "\n"
-        elif file.name.endswith(".pptx"):
-            ppt = Presentation(file)
-            for slide in ppt.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        full_text += shape.text + "\n"
-    return full_text.strip()
+# Extract Text
+extracted_text = ""
+for file in uploaded_files:
+    if file.name.endswith(".pdf"):
+        reader = PyPDF2.PdfReader(file)
+        for page in reader.pages:
+            extracted_text += page.extract_text() or ""
+    elif file.name.endswith(".docx"):
+        extracted_text += docx2txt.process(file)
+    elif file.name.endswith(".pptx"):
+        ppt = Presentation(file)
+        for slide in ppt.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text"):
+                    extracted_text += shape.text + "\n"
 
-# Helper: Save Word file
-def save_word(text, filename):
-    doc = Document()
-    for line in text.splitlines():
-        doc.add_paragraph(line)
-    path = os.path.join(tempfile.gettempdir(), filename)
-    doc.save(path)
-    return path
+# Prompt Engineering
+prompt = f"""
+Create a {duration}-minute training course on: "{topic}" for this audience: {audience}.
+Use a {tone.lower()} tone.
 
-# Helper: Save slide deck
+Return:
+1. Course_Outline: In tabular format (Time | Activity Type | Description).
+2. Facilitator_Guide: Rich with explanations, examples, case studies, transitions.
+3. Participant_Workbook: With instructions, exercises, reflection questions.
+4. Quiz: With MCQs, MMCQs, True/False. Include an answer key.
+5. Slide_Deck: One slide per section with bullet points (text only).
 
-def save_pptx(slides_text, filename):
-    prs = Presentation()
-    title_slide_layout = prs.slide_layouts[0]
-    bullet_slide_layout = prs.slide_layouts[1]
-    lines = slides_text.strip().split("\n")
-    current_title, bullets = None, []
+{f"Refer to notes: {user_notes}" if user_notes else ""}
+{f"Revise based on feedback: {feedback}" if feedback else ""}
+{f"Use this reference material: {extracted_text}" if extracted_text else ""}
+"""
 
-    def add_slide(title, bullet_lines):
-        slide = prs.slides.add_slide(bullet_slide_layout)
-        slide.shapes.title.text = title
-        content = slide.placeholders[1].text = "\n".join(bullet_lines)
-
-    for line in lines:
-        if line.strip() == "":
-            continue
-        if not line.startswith("-") and not current_title:
-            current_title = line.strip()
-        elif line.startswith("-"):
-            bullets.append(line.lstrip("- ").strip())
-        elif current_title:
-            add_slide(current_title, bullets)
-            current_title, bullets = line.strip(), []
-
-    if current_title:
-        add_slide(current_title, bullets)
-
-    path = os.path.join(tempfile.gettempdir(), filename)
-    prs.save(path)
-    return path
-
-# Generate Button
 if st.button("Generate Course Materials"):
-    with st.spinner("Generating using GPT-4o..."):
+    with st.spinner("Generating with GPT-4o..."):
         try:
-            file_text = extract_text_from_files(user_files) if user_files else ""
-            prompt = f"""
-            Design a {duration}-minute training course on "{topic}" for "{audience}" with a {tonality.lower()} tone.
-            Include:
-            1. Course Outline in a table format with time, activity type, and description.
-            2. Facilitator Guide with case study explanations, discussion tips, transitions.
-            3. Participant Workbook with exercises, instructions, and activities.
-            4. Quiz with MCQs, MMCQs, and True/False + answer key.
-            5. A PowerPoint slide deck (1 slide per idea with bullets, quotes, key points).
-            {f"Incorporate the following notes: {user_notes}" if user_notes else ""}
-            {f"Consider this feedback: {feedback}" if feedback else ""}
-            {f"Reference this material: {file_text}" if file_text else ""}
-            Format each section as: ===Section Name=== before the content.
-            """
-            response = openai.chat.completions.create(
+            response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}]
             )
-            reply = response.choices[0].message.content
+            result = response.choices[0].message.content
 
-            # Parse Sections
-            sections = {"Course_Outline": "", "Facilitator_Guide": "", "Workbook": "", "Quiz": "", "Slide_Deck": ""}
+            # Split into sections
+            sections = {"Course_Outline": "", "Facilitator_Guide": "", "Participant_Workbook": "", "Quiz": "", "Slide_Deck": ""}
             current = None
-            for line in reply.splitlines():
-                if line.startswith("==="):
-                    section = line.strip("= ").replace(" ", "_")
-                    if section in sections:
-                        current = section
-                elif current:
-                    sections[current] += line + "\n"
+            for line in result.splitlines():
+                line_stripped = line.strip()
+                for key in sections:
+                    if key.lower().replace("_", " ") in line_stripped.lower():
+                        current = key
+                        break
+                else:
+                    if current:
+                        sections[current] += line + "\n"
 
-            paths = {}
-            paths["Course_Outline"] = save_word(sections["Course_Outline"], "Course_Outline.docx")
-            paths["Facilitator_Guide"] = save_word(sections["Facilitator_Guide"], "Facilitator_Guide.docx")
-            paths["Workbook"] = save_word(sections["Workbook"], "Participant_Workbook.docx")
-            paths["Quiz"] = save_word(sections["Quiz"], "Quiz.docx")
-            paths["Slide_Deck"] = save_pptx(sections["Slide_Deck"], "Slide_Deck.pptx")
+            def save_docx(text, filename):
+                doc = Document()
+                for line in text.strip().splitlines():
+                    doc.add_paragraph(line)
+                path = os.path.join(tempfile.gettempdir(), filename)
+                doc.save(path)
+                return path
 
-            # ZIP all
-            zip_io = BytesIO()
-            with zipfile.ZipFile(zip_io, "w") as zf:
-                for name, path in paths.items():
-                    zf.write(path, os.path.basename(path))
-            zip_io.seek(0)
+            paths = {
+                "Course_Outline.docx": save_docx(sections["Course_Outline"], "Course_Outline.docx"),
+                "Facilitator_Guide.docx": save_docx(sections["Facilitator_Guide"], "Facilitator_Guide.docx"),
+                "Participant_Workbook.docx": save_docx(sections["Participant_Workbook"], "Participant_Workbook.docx"),
+                "Quiz.docx": save_docx(sections["Quiz"], "Quiz.docx"),
+                "Slide_Deck.docx": save_docx(sections["Slide_Deck"], "Slide_Deck.docx"),
+            }
 
-            st.success("✅ Course Materials Ready")
-            st.download_button("📦 Download All as ZIP", zip_io, file_name="Course_Materials.zip")
+            zip_buffer = BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zipf:
+                for filename, path in paths.items():
+                    zipf.write(path, arcname=filename)
+            zip_buffer.seek(0)
 
-            for name, path in paths.items():
-                st.download_button(f"⬇️ Download {name.replace('_', ' ')}", open(path, "rb"), file_name=os.path.basename(path))
+            st.success("✅ Course materials generated successfully.")
+            st.download_button("📦 Download All as ZIP", zip_buffer, file_name="Course_Materials.zip")
+
+            for filename, path in paths.items():
+                with open(path, "rb") as f:
+                    st.download_button(f"📥 {filename}", f, file_name=filename)
+
+            st.caption(f"Tokens used: {response.usage.total_tokens} (approx. ${(response.usage.total_tokens/1000)*0.01:.4f})")
 
         except Exception as e:
-            st.error(f"Error generating content: {e}")
+            st.error(f"❌ Error generating content: {e}")
