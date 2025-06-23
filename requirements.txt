@@ -3,4 +3,4 @@ openai>=1.0.0
 python-docx
 python-pptx
 PyPDF2
-python-dotenv
+docx2txt
