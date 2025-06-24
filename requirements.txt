@@ -3,4 +3,6 @@ openai>=1.0.0
 python-docx
 python-pptx
 PyPDF2
+mammoth
 docx2txt
+python-dotenv
