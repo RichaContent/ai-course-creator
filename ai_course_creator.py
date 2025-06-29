@@ -16,23 +16,95 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 st.set_page_config(page_title="AI Course Creator", layout="centered")
 st.title("📚 AI Course Creator for Trainers")
 
-# Step 1: Course Details
-st.header("Step 1: Course Details")
-topic = st.text_input("Course Topic", "Growth Mindset")
-audience = st.text_input("Target Audience", "Middle Management")
-duration = st.slider("Duration (minutes)", 30, 240, 90, step=15)
-tone = st.selectbox("Tone of Voice", ["Professional", "Conversational", "Inspirational"])
+# Built-in prompt templates
+templates = {
+    "Leadership": """You are an expert instructional designer.
+Create a delivery-ready, 90-minute training course on "Effective Leadership for First-Time Managers" for an audience of new managers.
+Requirements:
+✅ Tabular Course Outline (Time | Activity | Description).
+✅ Detailed Facilitator Guide with practical instructions, public domain definitions, examples.
+✅ Participant Workbook with reflective activities and exercises.
+✅ Quiz (5-8 questions with answers).
+✅ Slide Deck with clear titles and bullet points.
+✅ Public domain references only, no placeholders.
+✅ Practical examples, real scenarios.
+✅ Tone: Professional yet engaging.
+If notes or feedback are provided, integrate them while maintaining consistency.
+Return sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+""",
+    "Time Management": """You are an expert instructional designer.
+Create a delivery-ready, 60-minute training course on "Time Management for Busy Professionals."
+Requirements:
+✅ Tabular Course Outline.
+✅ Facilitator Guide with detailed talking points, examples.
+✅ Participant Workbook with practical activities (prioritization, Eisenhower Matrix).
+✅ Quiz with 5-8 aligned questions and answers.
+✅ Slide Deck with actionable tips, examples, and reflection prompts.
+✅ Clear, jargon-free, public domain references only.
+✅ Practical case studies included.
+If notes or feedback are provided, integrate them seamlessly.
+Return sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+""",
+    "Feedback & Performance Management": """You are an expert instructional designer.
+Create a delivery-ready, 90-minute training course on "Feedback and Performance Management for Middle Managers."
+Requirements:
+✅ Tabular Course Outline.
+✅ Detailed Facilitator Guide with sample dialogues, scenarios, SBIS model explanation.
+✅ Participant Workbook with exercises on preparing feedback, role-plays.
+✅ Quiz with practical scenario-based questions and answers.
+✅ Slide Deck aligned to the course flow.
+✅ All examples and quotes should be from public domain or generalized.
+If notes or uploaded files are provided, incorporate them while maintaining previous structure.
+Return sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+""",
+    "Emotional Intelligence": """You are an expert instructional designer.
+Create a delivery-ready, 90-minute training course on "Emotional Intelligence in the Workplace."
+Requirements:
+✅ Tabular Course Outline.
+✅ Facilitator Guide with explanations of self-awareness, self-regulation, empathy, etc.
+✅ Participant Workbook with reflection logs, activities.
+✅ Quiz aligned with objectives, with answers.
+✅ Slide Deck with clear visuals, definitions, and practical applications.
+✅ Public domain references, no placeholders.
+If notes or feedback are provided, incorporate while retaining structure.
+Return sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+"""
+}
 
-# Step 2: Upload files and notes
-st.header("Step 2: Upload Reference Files & Notes (Optional)")
-uploaded_files = st.file_uploader("Upload PDF, DOCX, PPTX files", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
-notes = st.text_area("Notes or Specific Instructions (Optional)")
+# Step 1: Select template
+st.header("Step 1: Select Training Topic")
+selected_template = st.selectbox("Choose a Course Template", list(templates.keys()))
 
-# Step 3: Feedback for revision
-st.header("Step 3: Feedback for Revision (Optional)")
-feedback = st.text_area("Feedback for refinement (Optional)")
+# Optional custom notes
+notes = st.text_area("Add Notes or Specific Instructions (Optional)")
 
-# File extraction
+# Step 2: Upload files
+uploaded_files = st.file_uploader("Upload Reference Files (PDF, DOCX, PPTX)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+
+# Step 3: Feedback
+feedback = st.text_area("Feedback for Refinement (Optional)")
+
+# Extract text from uploaded files
 def extract_uploaded_text(files):
     text = ""
     for file in files:
@@ -50,116 +122,77 @@ def extract_uploaded_text(files):
                 for shape in slide.shapes:
                     if hasattr(shape, "text"):
                         text += shape.text + "\n"
-    return text[:8000]  # limit for token safety
+    return text[:8000]
 
-# Slide deck generation
-def generate_slide_deck(slide_content):
+# Helper: Generate Slide Deck
+def generate_slide_deck(content):
     prs = Presentation()
-    for block in slide_content.strip().split("\n\n"):
+    for block in content.strip().split("\n\n"):
         lines = block.strip().split("\n")
-        if not lines:
-            continue
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = lines[0]
-        textbox = slide.placeholders[1]
-        for bullet in lines[1:]:
-            p = textbox.text_frame.add_paragraph()
-            p.text = bullet
-            p.font.size = Pt(20)
-    pptx_io = BytesIO()
-    prs.save(pptx_io)
-    pptx_io.seek(0)
-    return pptx_io
+        if lines:
+            slide = prs.slides.add_slide(prs.slide_layouts[1])
+            slide.shapes.title.text = lines[0]
+            textbox = slide.placeholders[1]
+            for bullet in lines[1:]:
+                p = textbox.text_frame.add_paragraph()
+                p.text = bullet
+                p.font.size = Pt(20)
+    output = BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
 
-# DOCX generation
+# Helper: Save DOCX
 def save_docx(content, filename):
     doc = Document()
     for line in content.strip().split("\n"):
         doc.add_paragraph(line)
-    temp_path = os.path.join(tempfile.gettempdir(), filename)
-    doc.save(temp_path)
-    return temp_path
+    path = os.path.join(tempfile.gettempdir(), filename)
+    doc.save(path)
+    return path
 
-# Generate button
+# Generate
 if st.button("🚀 Generate Course Materials"):
-    with st.spinner("Generating your comprehensive course materials..."):
+    with st.spinner("Generating your complete course package..."):
 
         extracted_text = extract_uploaded_text(uploaded_files) if uploaded_files else ""
-        ref_part = f"Reference Content:\n{extracted_text}\n" if extracted_text else ""
-        notes_part = f"Notes:\n{notes}\n" if notes else ""
-        feedback_part = f"Feedback for refinement:\n{feedback}\n" if feedback else ""
-
-        prompt = f"""
-You are a professional instructional designer creating a final delivery-ready training program.
-
-Topic: {topic}
-Audience: {audience}
-Duration: {duration} minutes
-Tone: {tone}
-
-Requirements:
-✅ Provide a **detailed, tabular Course Outline** with columns: Time, Activity Type, Explicit Description.
-✅ Create a **Facilitator Guide** with:
-- Exact instructions on what to say
-- Step-by-step flow
-- Definitions explained in simple terms
-- Public domain references only
-- Case study examples (fully included)
-- Instructions on handling participant questions.
-
-✅ Create a **Participant Workbook** with:
-- Reflection activities
-- Actionable exercises
-- Explicit instructions for each section
-- Scenarios and role-plays (with scenario text).
-
-✅ Create a **Quiz** with:
-- 5-8 questions (MCQ, MMCQ, T/F)
-- Correct answers clearly indicated
-- Aligned with the course objectives.
-
-✅ Create a **Slide Deck** with:
-- Complete titles and bullet points
-- Practical tips
-- Definitions
-- Quotes only if public domain.
-
-✅ All content must be fully usable by **non-SME trainers without additional editing**.
-
-✅ If feedback is provided, incorporate it while maintaining previous content.
-
-{ref_part}
-{notes_part}
-{feedback_part}
-
-Return the output in sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-"""
+        prompt = templates[selected_template]
+        if notes:
+            prompt += f"\nNotes for customization:\n{notes}"
+        if feedback:
+            prompt += f"\nFeedback for refinement:\n{feedback}"
+        if extracted_text:
+            prompt += f"\nReference extracted content:\n{extracted_text}"
 
         try:
-            completion = client.chat.completions.create(
-                model="gpt-4o-preview",
-                messages=[
-                    {"role": "system", "content": "You are a precise, clear instructional designer generating final delivery materials."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            response_content = completion.choices[0].message.content
+            # Attempt GPT-4o, fallback to GPT-3.5 if unavailable
+            try:
+                completion = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training content."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
+            except Exception:
+                completion = client.chat.completions.create(
+                    model="gpt-3.5-turbo",
+                    messages=[
+                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training content."},
+                        {"role": "user", "content": prompt}
+                    ]
+                )
 
-            sections = {key: "" for key in ["COURSE_OUTLINE", "FACILITATOR_GUIDE", "PARTICIPANT_WORKBOOK", "QUIZ", "SLIDE_DECK"]}
-            current_section = None
-            for line in response_content.splitlines():
+            response = completion.choices[0].message.content
+            sections = {k: "" for k in ["COURSE_OUTLINE", "FACILITATOR_GUIDE", "PARTICIPANT_WORKBOOK", "QUIZ", "SLIDE_DECK"]}
+            current = None
+            for line in response.splitlines():
                 line = line.strip()
                 if line.startswith("## ") and line[3:] in sections:
-                    current_section = line[3:]
-                elif current_section:
-                    sections[current_section] += line + "\n"
+                    current = line[3:]
+                elif current:
+                    sections[current] += line + "\n"
 
-            # Save DOCX
             outline_file = save_docx(sections["COURSE_OUTLINE"], "Course_Outline.docx")
             guide_file = save_docx(sections["FACILITATOR_GUIDE"], "Facilitator_Guide.docx")
             workbook_file = save_docx(sections["PARTICIPANT_WORKBOOK"], "Participant_Workbook.docx")
@@ -177,18 +210,18 @@ Return the output in sections:
             zip_buffer.seek(0)
 
             # Downloads
-            st.success("✅ All materials generated successfully!")
-            st.download_button("📥 Download All as ZIP", data=zip_buffer, file_name="Course_Materials.zip")
+            st.success("✅ All course materials generated successfully!")
+            st.download_button("📥 Download All Materials (ZIP)", data=zip_buffer, file_name="Course_Materials.zip")
             st.download_button("Download Course Outline", open(outline_file, "rb"), file_name="Course_Outline.docx")
             st.download_button("Download Facilitator Guide", open(guide_file, "rb"), file_name="Facilitator_Guide.docx")
-            st.download_button("Download Workbook", open(workbook_file, "rb"), file_name="Participant_Workbook.docx")
+            st.download_button("Download Participant Workbook", open(workbook_file, "rb"), file_name="Participant_Workbook.docx")
             st.download_button("Download Quiz", open(quiz_file, "rb"), file_name="Quiz.docx")
             st.download_button("Download Slide Deck", slide_deck_file, file_name="Slide_Deck.pptx")
 
-            # Token and cost tracking
+            # Show token usage
             try:
                 tokens_used = completion.usage.total_tokens
-                cost_estimate = round(tokens_used / 1000 * 0.03, 4)  # adjust rate if needed
+                cost_estimate = round(tokens_used / 1000 * 0.03, 4)
                 st.caption(f"Used {tokens_used} tokens · Estimated cost: ${cost_estimate:.4f}")
             except:
                 pass
