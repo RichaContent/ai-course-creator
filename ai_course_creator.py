@@ -16,103 +16,9 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 st.set_page_config(page_title="AI Course Creator", layout="centered")
 st.title("📚 AI Course Creator for Trainers")
 
-# Built-in prompt templates
-templates = {
-    "Leadership": """You are an expert instructional designer.
-
-Create a delivery-ready, 90-minute training course on "Effective Leadership for First-Time Managers" for an audience of new managers.
-
-Requirements:
-✅ Tabular Course Outline (Time | Activity | Description).
-✅ Detailed Facilitator Guide with practical instructions, public domain definitions, examples.
-✅ Participant Workbook with reflective activities and exercises.
-✅ Quiz (5-8 questions with answers).
-✅ Slide Deck with clear titles and bullet points.
-✅ Public domain references only, no placeholders.
-✅ Practical examples, real scenarios.
-✅ Tone: Professional yet engaging.
-
-If notes or feedback are provided, integrate them while maintaining consistency.
-
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Time Management": """You are an expert instructional designer.
-
-Create a delivery-ready, 60-minute training course on "Time Management for Busy Professionals."
-
-Requirements:
-✅ Tabular Course Outline.
-✅ Facilitator Guide with detailed talking points, examples.
-✅ Participant Workbook with practical activities (prioritization, Eisenhower Matrix).
-✅ Quiz with 5-8 aligned questions and answers.
-✅ Slide Deck with actionable tips, examples, and reflection prompts.
-✅ Clear, jargon-free, public domain references only.
-✅ Practical case studies included.
-
-If notes or feedback are provided, integrate them seamlessly.
-
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Feedback & Performance Management": """You are an expert instructional designer.
-
-Create a delivery-ready, 90-minute training course on "Feedback and Performance Management for Middle Managers."
-
-Requirements:
-✅ Tabular Course Outline.
-✅ Detailed Facilitator Guide with sample dialogues, scenarios, SBIS model explanation.
-✅ Participant Workbook with exercises on preparing feedback, role-plays.
-✅ Quiz with practical scenario-based questions and answers.
-✅ Slide Deck aligned to the course flow.
-✅ All examples and quotes should be from public domain or generalized.
-
-If notes or uploaded files are provided, incorporate them while maintaining previous structure.
-
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Emotional Intelligence": """You are an expert instructional designer.
-
-Create a delivery-ready, 90-minute training course on "Emotional Intelligence in the Workplace."
-
-Requirements:
-✅ Tabular Course Outline.
-✅ Facilitator Guide with explanations of self-awareness, self-regulation, empathy, etc.
-✅ Participant Workbook with reflection logs, activities.
-✅ Quiz aligned with objectives, with answers.
-✅ Slide Deck with clear visuals, definitions, and practical applications.
-✅ Public domain references, no placeholders.
-
-If notes or feedback are provided, incorporate while retaining structure.
-
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-"""
-}
-
-# User selects template
-st.header("Step 1: Select Training Topic")
-selected_template = st.selectbox("Choose a Course Template", list(templates.keys()))
-
-# Optionally edit topic/audience/duration
-topic = st.text_input("Course Topic (Edit if needed)", selected_template)
+# Step 1: Course Details
+st.header("Step 1: Course Details")
+topic = st.text_input("Course Topic", "Growth Mindset")
 audience = st.text_input("Target Audience", "Middle Management")
 duration = st.slider("Duration (minutes)", 30, 240, 90, step=15)
 tone = st.selectbox("Tone of Voice", ["Professional", "Conversational", "Inspirational"])
@@ -179,17 +85,66 @@ if st.button("🚀 Generate Course Materials"):
     with st.spinner("Generating your comprehensive course materials..."):
 
         extracted_text = extract_uploaded_text(uploaded_files) if uploaded_files else ""
-        ref_part = f"\nReference Content:\n{extracted_text}\n" if extracted_text else ""
-        notes_part = f"\nNotes:\n{notes}\n" if notes else ""
-        feedback_part = f"\nFeedback for refinement:\n{feedback}\n" if feedback else ""
+        ref_part = f"Reference Content:\n{extracted_text}\n" if extracted_text else ""
+        notes_part = f"Notes:\n{notes}\n" if notes else ""
+        feedback_part = f"Feedback for refinement:\n{feedback}\n" if feedback else ""
 
-        prompt = templates[selected_template] + ref_part + notes_part + feedback_part
+        prompt = f"""
+You are a professional instructional designer creating a final delivery-ready training program.
+
+Topic: {topic}
+Audience: {audience}
+Duration: {duration} minutes
+Tone: {tone}
+
+Requirements:
+✅ Provide a **detailed, tabular Course Outline** with columns: Time, Activity Type, Explicit Description.
+✅ Create a **Facilitator Guide** with:
+- Exact instructions on what to say
+- Step-by-step flow
+- Definitions explained in simple terms
+- Public domain references only
+- Case study examples (fully included)
+- Instructions on handling participant questions.
+
+✅ Create a **Participant Workbook** with:
+- Reflection activities
+- Actionable exercises
+- Explicit instructions for each section
+- Scenarios and role-plays (with scenario text).
+
+✅ Create a **Quiz** with:
+- 5-8 questions (MCQ, MMCQ, T/F)
+- Correct answers clearly indicated
+- Aligned with the course objectives.
+
+✅ Create a **Slide Deck** with:
+- Complete titles and bullet points
+- Practical tips
+- Definitions
+- Quotes only if public domain.
+
+✅ All content must be fully usable by **non-SME trainers without additional editing**.
+
+✅ If feedback is provided, incorporate it while maintaining previous content.
+
+{ref_part}
+{notes_part}
+{feedback_part}
+
+Return the output in sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+"""
 
         try:
             completion = client.chat.completions.create(
                 model="gpt-4o-preview",
                 messages=[
-                    {"role": "system", "content": "You are a precise instructional designer generating complete, ready-to-use materials for corporate trainers."},
+                    {"role": "system", "content": "You are a precise, clear instructional designer generating final delivery materials."},
                     {"role": "user", "content": prompt}
                 ]
             )
@@ -230,10 +185,10 @@ if st.button("🚀 Generate Course Materials"):
             st.download_button("Download Quiz", open(quiz_file, "rb"), file_name="Quiz.docx")
             st.download_button("Download Slide Deck", slide_deck_file, file_name="Slide_Deck.pptx")
 
-            # Token tracking
+            # Token and cost tracking
             try:
                 tokens_used = completion.usage.total_tokens
-                cost_estimate = round(tokens_used / 1000 * 0.03, 4)
+                cost_estimate = round(tokens_used / 1000 * 0.03, 4)  # adjust rate if needed
                 st.caption(f"Used {tokens_used} tokens · Estimated cost: ${cost_estimate:.4f}")
             except:
                 pass
