@@ -10,98 +10,28 @@ import PyPDF2
 import docx2txt
 import zipfile
 
-# Initialize OpenAI
+# Initialize OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Streamlit page setup
 st.set_page_config(page_title="AI Course Creator", layout="centered")
 st.title("📚 AI Course Creator for Trainers")
 
-# Built-in prompt templates
-templates = {
-    "Leadership": """You are an expert instructional designer.
-Create a delivery-ready, 90-minute training course on "Effective Leadership for First-Time Managers" for an audience of new managers.
-Requirements:
-✅ Tabular Course Outline (Time | Activity | Description).
-✅ Detailed Facilitator Guide with practical instructions, public domain definitions, examples.
-✅ Participant Workbook with reflective activities and exercises.
-✅ Quiz (5-8 questions with answers).
-✅ Slide Deck with clear titles and bullet points.
-✅ Public domain references only, no placeholders.
-✅ Practical examples, real scenarios.
-✅ Tone: Professional yet engaging.
-If notes or feedback are provided, integrate them while maintaining consistency.
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Time Management": """You are an expert instructional designer.
-Create a delivery-ready, 60-minute training course on "Time Management for Busy Professionals."
-Requirements:
-✅ Tabular Course Outline.
-✅ Facilitator Guide with detailed talking points, examples.
-✅ Participant Workbook with practical activities (prioritization, Eisenhower Matrix).
-✅ Quiz with 5-8 aligned questions and answers.
-✅ Slide Deck with actionable tips, examples, and reflection prompts.
-✅ Clear, jargon-free, public domain references only.
-✅ Practical case studies included.
-If notes or feedback are provided, integrate them seamlessly.
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Feedback & Performance Management": """You are an expert instructional designer.
-Create a delivery-ready, 90-minute training course on "Feedback and Performance Management for Middle Managers."
-Requirements:
-✅ Tabular Course Outline.
-✅ Detailed Facilitator Guide with sample dialogues, scenarios, SBIS model explanation.
-✅ Participant Workbook with exercises on preparing feedback, role-plays.
-✅ Quiz with practical scenario-based questions and answers.
-✅ Slide Deck aligned to the course flow.
-✅ All examples and quotes should be from public domain or generalized.
-If notes or uploaded files are provided, incorporate them while maintaining previous structure.
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-""",
-    "Emotional Intelligence": """You are an expert instructional designer.
-Create a delivery-ready, 90-minute training course on "Emotional Intelligence in the Workplace."
-Requirements:
-✅ Tabular Course Outline.
-✅ Facilitator Guide with explanations of self-awareness, self-regulation, empathy, etc.
-✅ Participant Workbook with reflection logs, activities.
-✅ Quiz aligned with objectives, with answers.
-✅ Slide Deck with clear visuals, definitions, and practical applications.
-✅ Public domain references, no placeholders.
-If notes or feedback are provided, incorporate while retaining structure.
-Return sections:
-## COURSE_OUTLINE
-## FACILITATOR_GUIDE
-## PARTICIPANT_WORKBOOK
-## QUIZ
-## SLIDE_DECK
-"""
-}
+# User Inputs
+st.header("Step 1: Enter Course Details")
+topic = st.text_input("Course Topic", "")
+audience = st.text_input("Target Audience", "Mid-Level Managers")
+duration = st.slider("Course Duration (minutes)", 30, 240, 90, step=15)
+level = st.selectbox("Course Level", ["Beginner", "Intermediate", "Advanced"])
+tone = st.selectbox("Preferred Tone", ["Professional", "Conversational", "Inspirational"])
 
-# Step 1: Select template
-st.header("Step 1: Select Training Topic")
-selected_template = st.selectbox("Choose a Course Template", list(templates.keys()))
-
-# Optional custom notes
+# Optional Notes
 notes = st.text_area("Add Notes or Specific Instructions (Optional)")
 
-# Step 2: Upload files
-uploaded_files = st.file_uploader("Upload Reference Files (PDF, DOCX, PPTX)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
+# Upload Files
+uploaded_files = st.file_uploader("Upload Reference Files (PDF, DOCX, PPTX) (Optional)", type=["pdf", "docx", "pptx"], accept_multiple_files=True)
 
-# Step 3: Feedback
+# Feedback
 feedback = st.text_area("Feedback for Refinement (Optional)")
 
 # Extract text from uploaded files
@@ -124,7 +54,7 @@ def extract_uploaded_text(files):
                         text += shape.text + "\n"
     return text[:8000]
 
-# Helper: Generate Slide Deck
+# Generate slide deck
 def generate_slide_deck(content):
     prs = Presentation()
     for block in content.strip().split("\n\n"):
@@ -142,7 +72,7 @@ def generate_slide_deck(content):
     output.seek(0)
     return output
 
-# Helper: Save DOCX
+# Generate DOCX
 def save_docx(content, filename):
     doc = Document()
     for line in content.strip().split("\n"):
@@ -151,26 +81,46 @@ def save_docx(content, filename):
     doc.save(path)
     return path
 
-# Generate
+# Generate Button
 if st.button("🚀 Generate Course Materials"):
-    with st.spinner("Generating your complete course package..."):
+    with st.spinner("Generating your course materials..."):
 
         extracted_text = extract_uploaded_text(uploaded_files) if uploaded_files else ""
-        prompt = templates[selected_template]
-        if notes:
-            prompt += f"\nNotes for customization:\n{notes}"
-        if feedback:
-            prompt += f"\nFeedback for refinement:\n{feedback}"
-        if extracted_text:
-            prompt += f"\nReference extracted content:\n{extracted_text}"
+
+        prompt = f"""
+You are a professional instructional designer creating a delivery-ready course.
+
+Topic: {topic}
+Audience: {audience}
+Duration: {duration} minutes
+Level: {level}
+Tone: {tone}
+
+Requirements:
+✅ Tabular Course Outline (Time, Activity, Description).
+✅ Detailed Facilitator Guide with instructions, explanations, and public domain references only.
+✅ Participant Workbook with clear instructions, exercises, and reflective activities.
+✅ Quiz with 5-8 MCQs/MMCQs/True-False with correct answers.
+✅ Slide Deck with clear titles and bullet points aligned with the course.
+
+{f"Notes:\n{notes}" if notes else ""}
+{f"Feedback for refinement:\n{feedback}" if feedback else ""}
+{f"Reference Content:\n{extracted_text}" if extracted_text else ""}
+
+Return output in sections:
+## COURSE_OUTLINE
+## FACILITATOR_GUIDE
+## PARTICIPANT_WORKBOOK
+## QUIZ
+## SLIDE_DECK
+"""
 
         try:
-            # Attempt GPT-4o, fallback to GPT-3.5 if unavailable
             try:
                 completion = client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training content."},
+                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training materials."},
                         {"role": "user", "content": prompt}
                     ]
                 )
@@ -178,7 +128,7 @@ if st.button("🚀 Generate Course Materials"):
                 completion = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=[
-                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training content."},
+                        {"role": "system", "content": "You are a precise instructional designer generating delivery-ready corporate training materials."},
                         {"role": "user", "content": prompt}
                     ]
                 )
@@ -193,6 +143,7 @@ if st.button("🚀 Generate Course Materials"):
                 elif current:
                     sections[current] += line + "\n"
 
+            # Generate files
             outline_file = save_docx(sections["COURSE_OUTLINE"], "Course_Outline.docx")
             guide_file = save_docx(sections["FACILITATOR_GUIDE"], "Facilitator_Guide.docx")
             workbook_file = save_docx(sections["PARTICIPANT_WORKBOOK"], "Participant_Workbook.docx")
@@ -209,8 +160,8 @@ if st.button("🚀 Generate Course Materials"):
                 zf.writestr("Slide_Deck.pptx", slide_deck_file.getvalue())
             zip_buffer.seek(0)
 
-            # Downloads
-            st.success("✅ All course materials generated successfully!")
+            # Download buttons
+            st.success("✅ Course materials generated successfully!")
             st.download_button("📥 Download All Materials (ZIP)", data=zip_buffer, file_name="Course_Materials.zip")
             st.download_button("Download Course Outline", open(outline_file, "rb"), file_name="Course_Outline.docx")
             st.download_button("Download Facilitator Guide", open(guide_file, "rb"), file_name="Facilitator_Guide.docx")
@@ -218,7 +169,7 @@ if st.button("🚀 Generate Course Materials"):
             st.download_button("Download Quiz", open(quiz_file, "rb"), file_name="Quiz.docx")
             st.download_button("Download Slide Deck", slide_deck_file, file_name="Slide_Deck.pptx")
 
-            # Show token usage
+            # Token usage and cost
             try:
                 tokens_used = completion.usage.total_tokens
                 cost_estimate = round(tokens_used / 1000 * 0.03, 4)
